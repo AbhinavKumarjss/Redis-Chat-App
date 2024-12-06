@@ -5,12 +5,6 @@ Showcases how to impliment chat app in Node.js, Socket.IO and Redis. This exampl
 <a href="https://github.com/redis-developer/basic-redis-chat-app-demo-nodejs/raw/main/docs/screenshot000.png"><img src="https://github.com/redis-developer/basic-redis-chat-app-demo-nodejs/raw/main/docs/screenshot000.png" width="49%"></a>
 <a href="https://github.com/redis-developer/basic-redis-chat-app-demo-nodejs/raw/main/docs/screenshot001.png"><img src="https://github.com/redis-developer/basic-redis-chat-app-demo-nodejs/raw/main/docs/screenshot001.png" width="49%"></a>
 
-# Overview video
-
-Here's a short video that explains the project and how it uses Redis:
-
-[![Watch the video on YouTube](https://github.com/redis-developer/basic-redis-chat-app-demo-nodejs/raw/main/README.md)](https://www.youtube.com/watch?v=miK7xDkDXF0)
-
 ## Technical Stacks
 
 - Frontend - _React_, _Socket_ (Socket.IO)
@@ -71,25 +65,7 @@ Redis is used mainly as a database to keep the user/messages data and for sendin
 
 - **Online users:** will return ids of users which are online
   - E.g `SMEMBERS online_users`
-
-#### Code Example: Prepare User Data in Redis HashSet
-
-```JavaScript
-const usernameKey = makeUsernameKey(username);
-/** Create user */
-const hashedPassword = await bcrypt.hash(password, 10);
-const nextId = await incr("total_users");
-const userKey = `user:${nextId}`;
-await set(usernameKey, userKey);
-await hmset(userKey, ["username", username, "password", hashedPassword]);
-
-/**
-* Each user has a set of rooms he is in
-* let's define the default ones
-*/
-await sadd(`user:${nextId}:rooms`, `${0}`); // Main room
-```
-
+    
 ### Rooms
 
 ![How it works](docs/screenshot001.png)
@@ -116,48 +92,6 @@ Each user has a set of rooms associated with them.
 - **Get room ids of a user:** `SMEMBERS user:{id}:rooms`.
   - E. g `SMEMBERS user:2:rooms`. This will return IDs of rooms for user with ID: 2
 
-#### Code Example: Get all My Rooms
-
-```JavaScript
-const rooms = [];
-for (let x = 0; x < roomIds.length; x++) {
-    const roomId = roomIds[x];
-
-    let name = await get(`room:${roomId}:name`);
-    /** It's a room without a name, likey the one with private messages */
-    if (!name) {
-        /**
-         * Make sure we don't add private rooms with empty messages
-         * It's okay to add custom (named rooms)
-         */
-        const roomExists = await exists(`room:${roomId}`);
-        if (!roomExists) {
-            continue;
-        }
-
-        const userIds = roomId.split(":");
-        if (userIds.length !== 2) {
-            return res.sendStatus(400);
-        }
-        rooms.push({
-            id: roomId,
-            names: [
-                await hmget(`user:${userIds[0]}`, "username"),
-                await hmget(`user:${userIds[1]}`, "username"),
-            ],
-        });
-    } else {
-        rooms.push({
-            id: roomId,
-            names: [name]
-        });
-    }
-}
-return rooms;
-```
-
-### Messages
-
 #### Pub/sub
 
 After initialization, a pub/sub subscription is created: `SUBSCRIBE MESSAGES`. At the same time, each server instance will run a listener on a message on this channel to receive real-time updates.
@@ -175,47 +109,6 @@ Pub/sub allows connecting multiple servers written in different platforms withou
 
 - **Get list of messages** `ZREVRANGE room:{roomId} {offset_start} {offset_end}`.
   - E.g `ZREVRANGE room:1:2 0 50` will return 50 messages with 0 offsets for the private room between users with IDs 1 and 2.
-
-#### Code Example: Send Message
-
-```Javascript
-async (message) => {
-    /** Make sure nothing illegal is sent here. */
-    message = {
-        ...message,
-        message: sanitise(message.message)
-    };
-    /**
-     * The user might be set as offline if he tried to access the chat from another tab, pinging by message
-     * resets the user online status
-     */
-    await sadd("online_users", message.from);
-    /** We've got a new message. Store it in db, then send back to the room. */
-    const messageString = JSON.stringify(message);
-    const roomKey = `room:${message.roomId}`;
-    /**
-     * It may be possible that the room is private and new, so it won't be shown on the other
-     * user's screen, check if the roomKey exist. If not then broadcast message that the room is appeared
-     */
-    const isPrivate = !(await exists(`${roomKey}:name`));
-    const roomHasMessages = await exists(roomKey);
-    if (isPrivate && !roomHasMessages) {
-        const ids = message.roomId.split(":");
-        const msg = {
-            id: message.roomId,
-            names: [
-                await hmget(`user:${ids[0]}`, "username"),
-                await hmget(`user:${ids[1]}`, "username"),
-            ],
-        };
-        publish("show.room", msg);
-        socket.broadcast.emit(`show.room`, msg);
-    }
-    await zadd(roomKey, "" + message.date, messageString);
-    publish("message", message);
-    io.to(roomKey).emit("message", message);
-}
-```
 
 ### Session handling
 
@@ -246,56 +139,3 @@ Note we send additional data related to the type of the message and the server i
 #### How the data is stored / accessed:
 
 The session data is stored in Redis by utilizing the [**connect-redis**](https://www.npmjs.com/package/connect-redis) client.
-
-```JavaScript
-const session = require("express-session");
-let RedisStore = require("connect-redis")(session);
-const sessionMiddleware = session({
-  store: new RedisStore({ client: redisClient }),
-  secret: "keyboard cat",
-  saveUninitialized: true,
-  resave: true,
-});
-```
-
-## How to run it locally?
-
-#### Write in environment variable or Dockerfile actual connection to Redis:
-
-```
-   REDIS_ENDPOINT_URL = "Redis server URI"
-   REDIS_PASSWORD = "Password to the server"
-```
-
-#### Run frontend
-
-```sh
-cd client
-yarn install
-yarn start
-```
-
-#### Run backend
-
-```sh
-yarn install
-yarn start
-```
-
-## Try it out
-
-#### Deploy to Heroku
-
-<p>
-    <a href="https://heroku.com/deploy" target="_blank">
-        <img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy to Heorku" />
-    </a>
-</p>
-
-#### Deploy to Google Cloud
-
-<p>
-    <a href="https://deploy.cloud.run" target="_blank">
-        <img src="https://deploy.cloud.run/button.svg" alt="Run on Google Cloud" width="150px"/>
-    </a>
-</p>
